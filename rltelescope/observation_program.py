@@ -26,7 +26,6 @@ import astroplan
 import astropy.units as u
 from astropy.time import Time
 from astropy.coordinates import SkyCoord
-from astropy.coordinates.earth import EarthLocation
 from skybright import skybright
 
 import warnings
@@ -92,7 +91,7 @@ class ObservationProgram:
     def reset(self):
         self.start_time, self.end_time = self.init_time_start()
         self.mjd = self.start_time
-        self.decl = 0 * self.angle_units 
+        self.decl = 0 * self.angle_units
         self.ra = 0 * self.angle_units
         self.band = "g"
         self.exposure_time_days = 300 / (60 * 60 * 24) * u.day 
@@ -107,7 +106,7 @@ class ObservationProgram:
         elevation = self.config.getfloat("Observatory Position", "elevation")* u.m
 
         return astroplan.Observer(
-            longitude=longitude, 
+            longitude=longitude,
             latitude=latitude, 
             elevation=elevation
         )
@@ -124,14 +123,14 @@ class ObservationProgram:
         sunset = self.observatory.sun_set_time(time).mjd * u.day
         end_time = sunset + self.duration
 
-        if type(sunset) == np.ma.core.MaskedArray:
+        if sunset.isinstance(np.ma.core.MaskedArray):
             sunset, end_time = self.init_time_start()
 
         return sunset, end_time
 
     def invalid_action(self, observation):
         "Verify an action is valid under the given constraints"
-        radians = self.angle_unit.to(u.radian)
+        radians = self.angle_units.to(u.radian)
 
         airmass_limit = self.config.getfloat("constraints", "airmass_limit")
         cos_zd_limit = 1.0011 / airmass_limit - 0.0011 * airmass_limit
@@ -158,8 +157,8 @@ class ObservationProgram:
 
         # Airmass limits
         ha_change = 2 * np.pi * (start_mjd - observation["mjd"]) * 24 / 23.9344696
-        ha_change = ha_change * RAD
-        ha = observation["ha"] * RAD + ha_change
+        ha_change = ha_change * radians
+        ha = observation["ha"] * radians + ha_change
         in_airmass_limit = np.cos(ha) > cos_ha_limit
 
         # Moon angle
@@ -171,7 +170,7 @@ class ObservationProgram:
         sun_ha = observation["sun_ha"] * radians + ha_change
         in_sun_limit = np.cos(sun_ha) < cos_sun_ha_limit
 
-        invalid = in_airmass_limit | in_sun_limit | in_moon_limit
+        invalid = not ( in_airmass_limit and in_sun_limit and in_moon_limit )
         return invalid
 
     def init_slew(self):
@@ -181,6 +180,7 @@ class ObservationProgram:
 
     @staticmethod
     def calc_airmass(hzcrds=None, zd=None):
+        "Airmass at the given hz and zd coordinates"
         if hzcrds is not None:
             cos_zd = np.cos(np.radians(90) - hzcrds.alt.rad)
         else:
@@ -315,7 +315,7 @@ class ObservationProgram:
         if band != self.band:
             slew_time_seconds += self.filter_change_time
 
-        slew_time_days = slew_time_seconds / (60 * 60 * 24)  # Convert to days
+        slew_time_days = slew_time_seconds.to_value(u.day)  # Convert to days
         return slew_time_days
 
     def _observation(self):
