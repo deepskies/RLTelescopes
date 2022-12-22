@@ -313,7 +313,7 @@ class ObservationProgram:
             slew_time_seconds = self.wait_time_seconds
 
         if band != self.band:
-            slew_time_seconds += self.filter_change_time
+            slew_time_seconds += self.filter_change_time_seconds
 
         slew_time_days = slew_time_seconds.to_value(u.day)  # Convert to days
         return slew_time_days
