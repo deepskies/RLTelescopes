@@ -20,6 +20,11 @@ jobs:
         python -m ensurepip
         python -m pip install --upgrade pip
         python -m pip install poetry==1.3.1
+
+    - name: Install palpy dependencies
+        python -m pip install numpy==1.24.0 cython==0.29.32 
+        python -m pip install palpy==1.8.1
+        python -m poetry add palpy==1.8.1
     - name: View poetry --help
       run: poetry --help
 

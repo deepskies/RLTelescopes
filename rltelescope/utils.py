@@ -9,4 +9,4 @@ def get_palpy_dependcies():
 
     pipmain(['install', 'numpy==1.24.0'])
     pipmain(['install', 'Cython==0.29.32'])
-    pipmain(['install', 'palpy==1.8.0'])
+    pipmain(['install', 'palpy==1.8.1'])
