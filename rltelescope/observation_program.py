@@ -2,6 +2,15 @@
 An adaptation of the observation program written by Eric Neilson in Astrotact:  https://github.com/ehneilsen/astrotact.git
 
 Designed to step through the night and calculate variables for a given point site/calculation combo.
+
+The program is written so that you can calculate the result of an action before taking it, 
+so to take an action call "update_observation(action)". 
+This updates the "obvervation" parameter of the class. 
+To just calculate the expected outcome of a action call "calculate_obversation"
+
+While not recommended, calling the internal "_observation",
+updates the observation state based on the currently stored action. 
+
 """
 import os.path
 
@@ -33,7 +42,7 @@ class ObservationProgram:
         self.config = configparser.ConfigParser()
         assert os.path.exists(config_path)
         self.config.read(config_path)
-        self.duration = duration
+        self.duration = duration * u.second
         self.observatory = self.init_observatory()
         self.slew_rate_deg_sec = self.init_slew()
         self.calc_sky = skybright.MoonSkyModel(self.config)
@@ -61,16 +70,16 @@ class ObservationProgram:
                 "Y": 1000.0,
             }
 
-        self.wait_time_seconds = 300
+        self.wait_time_seconds = 300 * u.second
 
         try:
             self.filter_change_time_seconds = self.config.getfloat(
                 "bands", "filter_change_rate"
             )
         except KeyError:
-            self.filter_change_time_seconds = 0.0
+            self.filter_change_time_seconds = 0.0 * u.second
 
-    def observation(self):
+    def _action(self):
         return {
             "mjd": self.mjd,
             "end_mjd": self.end_mjd,
@@ -83,28 +92,28 @@ class ObservationProgram:
     def reset(self):
         self.start_time, self.end_time = self.init_time_start()
         self.mjd = self.start_time
-        self.decl = 0
-        self.ra = 0
+        self.decl = 0 * self.angle_units 
+        self.ra = 0 * self.angle_units
         self.band = "g"
-        self.exposure_time_days = 300 / (60 * 60 * 24)
+        self.exposure_time_days = 300 / (60 * 60 * 24) * u.day 
         self.end_mjd = self.start_time + self.exposure_time_days
 
-        self.obs = self.observation()
-        self.state = self.exposures()
+        self.action = self._action()
+        self.observation = self._observation()
 
     def init_observatory(self):
-        latitude = self.config.getfloat("Observatory Position", "latitude")
-        longitude = self.config.getfloat("Observatory Position", "longitude")
-        elevation = self.config.getfloat("Observatory Position", "elevation")
+        latitude = self.config.getfloat("Observatory Position", "latitude")* self.angle_units
+        longitude = self.config.getfloat("Observatory Position", "longitude")* self.angle_units
+        elevation = self.config.getfloat("Observatory Position", "elevation")* u.m
 
         return astroplan.Observer(
-            longitude=longitude* self.angle_units, 
-            latitude=latitude * self.angle_units, 
-            elevation=elevation * u.m
+            longitude=longitude, 
+            latitude=latitude, 
+            elevation=elevation
         )
 
     def init_time_start(self):
-        "Sets the start and end time for an obversation period, starting at sunset"
+        "Sets the start and end time for an obversation period, starting at sunset. Units of days from mjd"
         # TODO Check for moon !!
         year = random.choice([i + 10 for i in range(0, 14)])
         month = random.choice([i + 1 for i in range(11)])
@@ -112,8 +121,8 @@ class ObservationProgram:
         date = f"20{year}-{str(month).zfill(2)}-{str(day).zfill(2)}T01:00:00Z"
 
         time = Time(date, format="isot")
-        sunset = self.observatory.sun_set_time(time).mjd
-        end_time = sunset + self.duration / 24
+        sunset = self.observatory.sun_set_time(time).mjd * u.day
+        end_time = sunset + self.duration
 
         if type(sunset) == np.ma.core.MaskedArray:
             sunset, end_time = self.init_time_start()
@@ -154,7 +163,7 @@ class ObservationProgram:
         in_airmass_limit = np.cos(ha) > cos_ha_limit
 
         # Moon angle
-        min_moon_angle = self.config.getfloat("constraints", "min_moon_angle")
+        min_moon_angle = self.config.getfloat("constraints", "min_moon_angle") * self.angle_units
         in_moon_limit = observation["moon_angle"] > min_moon_angle
 
         # Solar ZD.
@@ -167,7 +176,7 @@ class ObservationProgram:
 
     def init_slew(self):
         "Sets the slew rate for the telescope, in angle/sec"
-        slew_expr = self.config.getfloat("slew", "slew_expr") * self.angle_units/u.sec
+        slew_expr = self.config.getfloat("slew", "slew_expr") * self.angle_units/u.second
         return slew_expr
 
     @staticmethod
@@ -183,20 +192,23 @@ class ObservationProgram:
         return airmass
 
     def current_coord(self):
-        return SkyCoord(ra=self.ra * self.angle_units, dec=self.decl * self.angle_units)
+        radians = self.angle_units.to(u.radian)
+        return SkyCoord(ra=self.ra* radians, dec=self.decl* radians)
 
     def trans_to_altaz(self, mjd, coord):
         alt_az = self.observatory.altaz(time=mjd, target=coord)
         return alt_az
 
-    def calculate_exposures(self, obs):
+    def calculate_obversation(self, action):
         RIGHT_ANGLE = (90 * u.deg).to_value(self.angle_units)
+        radians = self.angle_units.to(u.radian)
 
+        
         try:
-            time = Time(obs["mjd"], format="mjd")
+            time = Time(action["mjd"], format="mjd")
 
         except u.core.UnitConversionError:
-            time = Time(obs["mjd"] * u.day, format="mjd")
+            time = Time(action["mjd"] * u.day, format="mjd")
 
         exposure = {}
         exposure["seeing"] = self.seeing
@@ -204,16 +216,16 @@ class ObservationProgram:
         try:
             exposure["lst"] = self.observatory.local_sidereal_time(
                 time, "mean"
-            ).to_value(self.angle_units)
+             ).to_value(self.angle_units) * self.angle_units
         except TypeError:
-            exposure["lst"] = self.state["lst"]
+            exposure["lst"] = self.observation["lst"].to_value(self.angle_units) * self.angle_units
 
-        current_coords = SkyCoord(ra=obs["ra"] * self.angle_units, dec=obs["decl"] * self.angle_units)
+        current_coords = SkyCoord(ra=action["ra"]*radians, dec=action["decl"]*radians)
         hzcrds = self.trans_to_altaz(time, current_coords)
         exposure["az"] = hzcrds.az.to_value(self.angle_units)
         exposure["alt"] = hzcrds.alt.to_value(self.angle_units)
         exposure["zd"] = RIGHT_ANGLE - exposure["alt"]
-        exposure["ha"] = exposure["lst"] - obs["ra"]
+        exposure["ha"] = exposure["lst"].value - action["ra"].value
         exposure["airmass"] = ObservationProgram.calc_airmass(hzcrds)
 
         # Sun coordinates
@@ -224,7 +236,7 @@ class ObservationProgram:
         exposure["sun_az"] = sun_hzcrds.az.to_value(self.angle_units)
         exposure["sun_alt"] = sun_hzcrds.alt.to_value(self.angle_units)
         exposure["sun_zd"] = RIGHT_ANGLE - exposure["sun_alt"]
-        exposure["sun_ha"] = exposure["lst"] - exposure["sun_ra"]
+        exposure["sun_ha"] = exposure["lst"].value - exposure["sun_ra"]
 
         # Moon coordinates
         site_location = self.observatory.location
@@ -235,7 +247,7 @@ class ObservationProgram:
         exposure["moon_az"] = moon_hzcrds.az.to_value(self.angle_units)
         exposure["moon_alt"] = moon_hzcrds.alt.to_value(self.angle_units)
         exposure["moon_zd"] = RIGHT_ANGLE - exposure["moon_alt"]
-        exposure["moon_ha"] = exposure["lst"] - exposure["moon_ra"]
+        exposure["moon_ha"] = exposure["lst"].value - exposure["moon_ra"]
         exposure["moon_airmass"] = ObservationProgram.calc_airmass(moon_hzcrds)
 
         # Moon phase
@@ -252,23 +264,23 @@ class ObservationProgram:
         )
 
         exposure["sky_mag"] = self.calc_sky(
-            obs["mjd"],
-            obs["ra"],
-            obs["decl"],
-            obs["band"],
+            action["mjd"].value,
+            action["ra"].value,
+            action["decl"].value,
+            action["band"],
             moon_crds=moon_crds,
             moon_elongation=moon_elongation.deg,
             sun_crds=sun_crds,
         )
 
-        m0 = self.calc_sky.m_zen[obs["band"]]
+        m0 = self.calc_sky.m_zen[action["band"]]
 
         nu = 10 ** (-1 * self.clouds / 2.5)
 
         pt_seeing = self.seeing * exposure["airmass"] ** 0.6
         fwhm500 = np.sqrt(pt_seeing**2 + self.optics_fwhm**2)
 
-        wavelength = self.band_wavelength[obs["band"]]
+        wavelength = self.band_wavelength[action["band"]]
         band_seeing = pt_seeing * (500.0 / wavelength) ** 0.2
         fwhm = np.sqrt(band_seeing**2 + self.optics_fwhm**2)
         exposure["fwhm"] = fwhm
@@ -279,14 +291,14 @@ class ObservationProgram:
 
         exposure["tau"] = 0.0 if ~np.isfinite(exposure["tau"]) else exposure["tau"]
 
-        exposure["teff"] = exposure["tau"] * obs["exposure_time_days"]
+        exposure["teff"] = exposure["tau"] * action["exposure_time_days"]
 
-        for key in obs:
+        for key in action:
             if key not in ["band"]:
-                exposure[key] = obs[key]
+                exposure[key] = action[key]
 
-        updated_coords = SkyCoord(ra=obs["ra"] * self.angle_units, dec=obs["decl"] * self.angle_units)
-        exposure["slew"] = self.calculate_slew(updated_coords, obs["band"])
+        updated_coords = SkyCoord(ra=action["ra"]* radians, dec=action["decl"]* radians)
+        exposure["slew"] = self.calculate_slew(updated_coords, action["band"])
 
         exposure = pd.DataFrame(exposure, index=[0]).fillna(0).to_dict("records")[0]
         return exposure
@@ -306,9 +318,8 @@ class ObservationProgram:
         slew_time_days = slew_time_seconds / (60 * 60 * 24)  # Convert to days
         return slew_time_days
 
-    def exposures(self):
-        exposure = self.calculate_exposures(self.obs)
-        self.state = exposure
+    def _observation(self):
+        exposure = self.calculate_obversation(self.action)
         return exposure
 
     def update_mjd(self, ra, decl, band):
@@ -360,8 +371,8 @@ class ObservationProgram:
             else self.exposure_time_days
         )
 
-        self.obs = self.observation()
-        self.state = self.exposures()
+        self.action = self._action()
+        self.observation = self._observation()
 
 
 if __name__ == "__main__":
