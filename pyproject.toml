@@ -5,9 +5,10 @@ description = "\"Method to generate schedule for ground based telescope observat
 authors = ["voetberg <magpie127@gmail.com>"]
 license = "MIT"
 
+[tool.poetry.scripts]
+get-deps = "rltelescope.utils:get_palpy_dependcies"
+
 [tool.poetry.dependencies]
-Cython = "^0.29.32"
-numpy = "^1.24.0"
 python = ">=3.8,<3.11"
 gym = "0.21.0"
 numexpr = "2.8.3"
