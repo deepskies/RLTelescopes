@@ -3,13 +3,13 @@ An adaptation of the observation program written by Eric Neilson in Astrotact:  
 
 Designed to step through the night and calculate variables for a given point site/calculation combo.
 
-The program is written so that you can calculate the result of an action before taking it, 
-so to take an action call "update_observation(action)". 
-This updates the "obvervation" parameter of the class. 
+The program is written so that you can calculate the result of an action before taking it,
+so to take an action call "update_observation(action)".
+This updates the "obvervation" parameter of the class.
 To just calculate the expected outcome of a action call "calculate_obversation"
 
 While not recommended, calling the internal "_observation",
-updates the observation state based on the currently stored action. 
+updates the observation state based on the currently stored action.
 
 """
 import os.path
@@ -49,8 +49,8 @@ class ObservationProgram:
 
         self.seeing = self.config.getfloat("weather", "seeing")
         self.clouds = self.config.getfloat("weather", "cloud_extinction")
-
-        self.reset()
+        self.band = "g"
+        # self.reset()
 
     def set_optics(self):
         self.optics_fwhm = self.config.getfloat("optics", "fwhm")
@@ -91,24 +91,26 @@ class ObservationProgram:
     def reset(self):
         self.start_time, self.end_time = self.init_time_start()
         self.mjd = self.start_time
-        self.decl = 0 * self.angle_units
-        self.ra = 0 * self.angle_units
+        self.decl = np.asarray([0])
+        self.ra = np.asarray([0])
         self.band = "g"
-        self.exposure_time_days = 300 / (60 * 60 * 24) * u.day 
+        self.exposure_time_days = 300 / (60 * 60 * 24) * u.day
         self.end_mjd = self.start_time + self.exposure_time_days
 
         self.action = self._action()
         self.observation = self._observation()
 
     def init_observatory(self):
-        latitude = self.config.getfloat("Observatory Position", "latitude")* self.angle_units
-        longitude = self.config.getfloat("Observatory Position", "longitude")* self.angle_units
-        elevation = self.config.getfloat("Observatory Position", "elevation")* u.m
+        latitude = (
+            self.config.getfloat("Observatory Position", "latitude") * self.angle_units
+        )
+        longitude = (
+            self.config.getfloat("Observatory Position", "longitude") * self.angle_units
+        )
+        elevation = self.config.getfloat("Observatory Position", "elevation") * u.m
 
         return astroplan.Observer(
-            longitude=longitude,
-            latitude=latitude, 
-            elevation=elevation
+            longitude=longitude, latitude=latitude, elevation=elevation
         )
 
     def init_time_start(self):
@@ -123,46 +125,52 @@ class ObservationProgram:
         sunset = self.observatory.sun_set_time(time).mjd * u.day
         end_time = sunset + self.duration
 
-        if sunset.isinstance(np.ma.core.MaskedArray):
-            sunset, end_time = self.init_time_start()
+        # if sunset.isinstance(np.ma.core.MaskedArray):
+        #     sunset, end_time = self.init_time_start()
 
         return sunset, end_time
 
     def invalid_action(self, observation):
         "Verify an action is valid under the given constraints"
+        RIGHT_ANGLE = (90 * u.deg).to_value(self.angle_units) * self.angle_units
         radians = self.angle_units.to(u.radian)
 
         airmass_limit = self.config.getfloat("constraints", "airmass_limit")
         cos_zd_limit = 1.0011 / airmass_limit - 0.0011 * airmass_limit
 
         # From the spherical cosine formula
-        site_lat = self.config.getfloat("Observatory Position", "latitude")* self.angle_units
+        site_lat = (
+            self.config.getfloat("Observatory Position", "latitude") * self.angle_units
+        )
 
         # TODO Fix radian conversion
-        cos_lat = np.cos(site_lat* radians)
-        sin_lat = np.sin(site_lat* radians)
+        cos_lat = np.cos(site_lat * radians)
+        sin_lat = np.sin(site_lat * radians)
         cos_dec = np.cos(observation["decl"] * radians)
         sin_dec = np.sin(observation["decl"] * radians)
         cos_ha_limit = (cos_zd_limit - sin_dec * sin_lat) / (cos_dec * cos_lat)
 
-        max_sun_alt = self.config.getfloat("constraints", "max_sun_alt")* self.angle_units
-        cos_sun_zd_limit = np.cos((90 - max_sun_alt) * radians)
+        max_sun_alt = (
+            self.config.getfloat("constraints", "max_sun_alt") * self.angle_units
+        )
+        cos_sun_zd_limit = np.cos((RIGHT_ANGLE - max_sun_alt) * radians)
         cos_sun_dec = np.cos(observation["sun_decl"] * radians)
         sin_sun_dec = np.sin(observation["sun_decl"] * radians)
         cos_sun_ha_limit = (cos_sun_zd_limit - sin_sun_dec * sin_lat) / (
             cos_sun_dec * cos_lat
         )
 
-        start_mjd = observation["mjd"]
+        # Assuming a 300 second between observations
+        start_mjd = observation["mjd"] - 0.003472222
 
         # Airmass limits
         ha_change = 2 * np.pi * (start_mjd - observation["mjd"]) * 24 / 23.9344696
         ha_change = ha_change * radians
-        ha = observation["ha"] * radians + ha_change
+        ha = observation["ha"] + ha_change
         in_airmass_limit = np.cos(ha) > cos_ha_limit
 
         # Moon angle
-        min_moon_angle = self.config.getfloat("constraints", "min_moon_angle") * self.angle_units
+        min_moon_angle = self.config.getfloat("constraints", "min_moon_angle")
         in_moon_limit = observation["moon_angle"] > min_moon_angle
 
         # Solar ZD.
@@ -170,12 +178,18 @@ class ObservationProgram:
         sun_ha = observation["sun_ha"] * radians + ha_change
         in_sun_limit = np.cos(sun_ha) < cos_sun_ha_limit
 
-        invalid = not ( in_airmass_limit and in_sun_limit and in_moon_limit )
+        invalid = np.logical_not(
+            np.logical_and(
+                np.logical_and(in_airmass_limit, in_sun_limit), in_moon_limit
+            )
+        )
         return invalid
 
     def init_slew(self):
         "Sets the slew rate for the telescope, in angle/sec"
-        slew_expr = self.config.getfloat("slew", "slew_expr") * self.angle_units/u.second
+        slew_expr = (
+            self.config.getfloat("slew", "slew_expr") * self.angle_units / u.second
+        )
         return slew_expr
 
     @staticmethod
@@ -191,9 +205,9 @@ class ObservationProgram:
         airmass[hzcrds.alt.rad < 0] = np.nan
         return airmass
 
-    def current_coord(self):
+    def current_coord(self, ra, decl):
         radians = self.angle_units.to(u.radian)
-        return SkyCoord(ra=self.ra* radians, dec=self.decl* radians)
+        return SkyCoord(ra=ra * radians * u.radian, dec=decl * radians * u.radian)
 
     def trans_to_altaz(self, mjd, coord):
         alt_az = self.observatory.altaz(time=mjd, target=coord)
@@ -203,7 +217,6 @@ class ObservationProgram:
         RIGHT_ANGLE = (90 * u.deg).to_value(self.angle_units)
         radians = self.angle_units.to(u.radian)
 
-        
         try:
             time = Time(action["mjd"], format="mjd")
 
@@ -216,16 +229,16 @@ class ObservationProgram:
         try:
             exposure["lst"] = self.observatory.local_sidereal_time(
                 time, "mean"
-             ).to_value(self.angle_units) * self.angle_units
+            ).to_value(self.angle_units)
         except TypeError:
-            exposure["lst"] = self.observation["lst"].to_value(self.angle_units) * self.angle_units
+            exposure["lst"] = self.observation["lst"].to_value(self.angle_units)
 
-        current_coords = SkyCoord(ra=action["ra"]*radians, dec=action["decl"]*radians)
+        current_coords = self.current_coord(action["ra"], action["decl"])
         hzcrds = self.trans_to_altaz(time, current_coords)
         exposure["az"] = hzcrds.az.to_value(self.angle_units)
         exposure["alt"] = hzcrds.alt.to_value(self.angle_units)
         exposure["zd"] = RIGHT_ANGLE - exposure["alt"]
-        exposure["ha"] = exposure["lst"].value - action["ra"].value
+        exposure["ha"] = exposure["lst"] - action["ra"]
         exposure["airmass"] = ObservationProgram.calc_airmass(hzcrds)
 
         # Sun coordinates
@@ -236,7 +249,7 @@ class ObservationProgram:
         exposure["sun_az"] = sun_hzcrds.az.to_value(self.angle_units)
         exposure["sun_alt"] = sun_hzcrds.alt.to_value(self.angle_units)
         exposure["sun_zd"] = RIGHT_ANGLE - exposure["sun_alt"]
-        exposure["sun_ha"] = exposure["lst"].value - exposure["sun_ra"]
+        exposure["sun_ha"] = exposure["lst"] - exposure["sun_ra"]
 
         # Moon coordinates
         site_location = self.observatory.location
@@ -247,7 +260,7 @@ class ObservationProgram:
         exposure["moon_az"] = moon_hzcrds.az.to_value(self.angle_units)
         exposure["moon_alt"] = moon_hzcrds.alt.to_value(self.angle_units)
         exposure["moon_zd"] = RIGHT_ANGLE - exposure["moon_alt"]
-        exposure["moon_ha"] = exposure["lst"].value - exposure["moon_ra"]
+        exposure["moon_ha"] = exposure["lst"] - exposure["moon_ra"]
         exposure["moon_airmass"] = ObservationProgram.calc_airmass(moon_hzcrds)
 
         # Moon phase
@@ -264,23 +277,23 @@ class ObservationProgram:
         )
 
         exposure["sky_mag"] = self.calc_sky(
-            action["mjd"].value,
-            action["ra"].value,
-            action["decl"].value,
-            action["band"],
+            action["mjd"],
+            action["ra"],
+            action["decl"],
+            np.asarray([self.band for _ in range(len(action["ra"]))]),
             moon_crds=moon_crds,
             moon_elongation=moon_elongation.deg,
             sun_crds=sun_crds,
         )
 
-        m0 = self.calc_sky.m_zen[action["band"]]
+        m0 = self.calc_sky.m_zen[self.band]
 
         nu = 10 ** (-1 * self.clouds / 2.5)
 
         pt_seeing = self.seeing * exposure["airmass"] ** 0.6
         fwhm500 = np.sqrt(pt_seeing**2 + self.optics_fwhm**2)
 
-        wavelength = self.band_wavelength[action["band"]]
+        wavelength = self.band_wavelength[self.band]
         band_seeing = pt_seeing * (500.0 / wavelength) ** 0.2
         fwhm = np.sqrt(band_seeing**2 + self.optics_fwhm**2)
         exposure["fwhm"] = fwhm
@@ -289,7 +302,7 @@ class ObservationProgram:
             10 ** ((exposure["sky_mag"] - m0) / 2.5)
         )
 
-        exposure["tau"] = 0.0 if ~np.isfinite(exposure["tau"]) else exposure["tau"]
+        # exposure["tau"] = 0.0 if ~np.isfinite(exposure["tau"]) else exposure["tau"]
 
         exposure["teff"] = exposure["tau"] * action["exposure_time_days"]
 
@@ -297,24 +310,17 @@ class ObservationProgram:
             if key not in ["band"]:
                 exposure[key] = action[key]
 
-        updated_coords = SkyCoord(ra=action["ra"]* radians, dec=action["decl"]* radians)
-        exposure["slew"] = self.calculate_slew(updated_coords, action["band"])
+        # exposure["slew"] = self.calculate_slew(current_coords, self.band)
+        # exposure = pd.DataFrame(exposure, index=[0]).fillna(0).to_dict("records")[0]
 
-        exposure = pd.DataFrame(exposure, index=[0]).fillna(0).to_dict("records")[0]
+        exposure["invalid"] = self.invalid_action(exposure)
         return exposure
 
     def calculate_slew(self, new_coords, band):
-        original_coords = self.current_coord()
+        original_coords = self.current_coord(self.ra, self.decl)
 
         coord_sep = original_coords.separation(new_coords)
-        slew_time_seconds = self.slew_rate_deg_sec * coord_sep / u.degree
-
-        if original_coords == new_coords:
-            slew_time_seconds = self.wait_time_seconds
-
-        if band != self.band:
-            slew_time_seconds += self.filter_change_time_seconds
-
+        slew_time_seconds = self.slew_rate_deg_sec * coord_sep
         slew_time_days = slew_time_seconds.to_value(u.day)  # Convert to days
         return slew_time_days
 
@@ -327,7 +333,7 @@ class ObservationProgram:
         if not self.check_nighttime():
             self.advance_to_nighttime()
 
-        original_coords = self.current_coord()
+        original_coords = self.current_coord(self.ra, self.decl)
 
         if (ra is None) and (decl is None):
             updated_coords = original_coords
