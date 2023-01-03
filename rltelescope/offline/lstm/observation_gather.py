@@ -1,6 +1,6 @@
 import sys
 
-sys.path.append("..")
+sys.path.append("../..")
 from observation_program import ObservationProgram
 import pandas as pd
 import numpy as np
@@ -72,5 +72,5 @@ class ObservationGather:
 
 
 if __name__ == "__main__":
-    obs_config_path = os.path.abspath("../train_configs/default_obsprog.conf")
+    obs_config_path = os.path.abspath("../../train_configs/default_obsprog.conf")
     ObservationGather(500, 4, obs_config_path)("offline_observations.csv")
