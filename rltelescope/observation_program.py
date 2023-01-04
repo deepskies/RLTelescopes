@@ -153,7 +153,7 @@ class ObservationProgram:
         max_sun_alt = (
             self.config.getfloat("constraints", "max_sun_alt") * self.angle_units
         )
-        cos_sun_zd_limit = np.cos((RIGHT_ANGLE - max_sun_alt) * radians)
+        cos_sun_zd_limit = np.cos(RIGHT_ANGLE - max_sun_alt)
         cos_sun_dec = np.cos(observation["sun_decl"] * radians)
         sin_sun_dec = np.sin(observation["sun_decl"] * radians)
         cos_sun_ha_limit = (cos_sun_zd_limit - sin_sun_dec * sin_lat) / (
