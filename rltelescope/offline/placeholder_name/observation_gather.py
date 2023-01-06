@@ -9,6 +9,7 @@ import astropy.units as u
 from astropy.time import Time
 
 import sys
+import tqdm
 
 sys.path.append("../..")
 
@@ -100,8 +101,8 @@ class ObservationGather(ObservationProgram):
             os.makedirs(base_dir)
 
         pd.DataFrame().to_csv(save_path)
-
-        for item in range(batches):
+        iter = tqdm.tqdm(range(batches))
+        for item, _ in zip(range(batches), iter):
             batch_lower_index = item * batch_size
             batch_higher_index = (item + 1) * batch_size
             batch_schedule = self.schedules.iloc[batch_lower_index:batch_higher_index]
@@ -128,4 +129,4 @@ if __name__ == "__main__":
     file_names = train_names + test_names + val_names
 
     for file_name in file_names:
-        obsgather(1, save_path=file_name)
+        obsgather(6, save_path=file_name)
