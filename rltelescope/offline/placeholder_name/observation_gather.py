@@ -35,7 +35,7 @@ class ObservationGather(ObservationProgram):
         self.schedules = {"mjd": [], "decl": [], "ra": []}
 
     def get_dates(self):
-        date_range = range(2455198, 2459581)
+        date_range = range(55197, 58849)
         self.dates = [
             date_range[index]
             for index in np.random.randint(0, len(date_range), self.n_schedules)
@@ -118,13 +118,13 @@ if __name__ == "__main__":
     obsgather = ObservationGather(
         obsprog_config,
         n_observation_sites=50,
-        n_schedules=10,
+        n_schedules=50,
         observation_length=observation_length_days,
     )
 
-    train_names = [f"offline_data/train_observations/train_{n}.csv" for n in range(6)]
-    test_names = [f"offline_data/test_observations/test_{n}.csv" for n in range(2)]
-    val_names = [f"offline_data/val_observations/val_{n}.csv" for n in range(2)]
+    train_names = [f"offline_data/train_observations/train_{n}.csv" for n in range(2)]
+    test_names = [f"offline_data/test_observations/test_{n}.csv" for n in range(1)]
+    val_names = [f"offline_data/val_observations/val_{n}.csv" for n in range(1)]
     file_names = train_names + test_names + val_names
 
     for file_name in file_names:
